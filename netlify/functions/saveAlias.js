@@ -28,12 +28,11 @@ const db = admin.database();
 // --- Netlify Serverless Function Handler ---
 exports.handler = async (event, context) => {
   // --- CORS Preflight Check ---
-  // Browsers send an OPTIONS request first to check permissions. We need to allow this.
   if (event.httpMethod === 'OPTIONS') {
     return {
-      statusCode: 204, // No Content
+      statusCode: 204,
       headers: {
-        'Access-Control-Allow-Origin': '*', // Allow any origin
+        'Access-Control-Allow-Origin': '*',
         'Access-Control-Allow-Headers': 'Content-Type',
         'Access-Control-Allow-Methods': 'POST, OPTIONS'
       },
@@ -62,12 +61,17 @@ exports.handler = async (event, context) => {
       };
     }
 
+    // FIX: Create one complete data object that includes the alias from the start.
+    // This ensures the 'alias' field is sent to both Wix and Firebase correctly.
     const aliasData = {
+      alias: alias,
       email: email || '',
       timestamp,
       deviceName: deviceName || '',
       deviceType: deviceType || '',
     };
+    
+    console.log("Attempting to save data:", JSON.stringify(aliasData));
 
     const wixApiUrl = process.env.WIX_API_URL;
     const wixApiKey = process.env.WIX_API_KEY;
@@ -81,51 +85,63 @@ exports.handler = async (event, context) => {
         };
     }
 
+    // --- Run operations and log results individually for better debugging ---
+    let wixSuccess = false;
+    let firebaseSuccess = false;
+    let wixError = null;
+    let firebaseError = null;
+
     // Operation 1: Send data to the new Wix API endpoint
-    const wixPromise = fetch(wixApiUrl, {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/json',
-            'x-api-key': wixApiKey
-        },
-        body: JSON.stringify({ alias, ...aliasData })
-    });
+    try {
+        console.log("Sending data to Wix...");
+        const wixResponse = await fetch(wixApiUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'x-api-key': wixApiKey },
+            body: JSON.stringify(aliasData) // Send the complete data object
+        });
+        if (wixResponse.ok) {
+            wixSuccess = true;
+            console.log("Successfully sent data to Wix.");
+        } else {
+            const errorText = await wixResponse.text();
+            wixError = `Wix API returned status: ${wixResponse.status} - ${errorText}`;
+            console.error(wixError);
+        }
+    } catch (error) {
+        wixError = `Error calling Wix API: ${error.message}`;
+        console.error(wixError);
+    }
 
     // Operation 2: Set data in Firebase
-    const fireMasterDataRef = db.ref(`fire-masterdata/aliases/${alias}`);
-    const firebasePromise = fireMasterDataRef.set(aliasData);
-
-    const results = await Promise.allSettled([wixPromise, firebasePromise]);
-
-    const wixResult = results[0];
-    const firebaseResult = results[1];
-    
-    let errors = [];
-    if (wixResult.status === 'rejected' || (wixResult.status === 'fulfilled' && !wixResult.value.ok)) {
-        const errorMsg = `Wix update failed: ${wixResult.reason || wixResult.value.statusText}`;
-        console.error(errorMsg);
-        errors.push(errorMsg);
-    }
-     if (firebaseResult.status === 'rejected') {
-        const errorMsg = `Firebase update failed: ${firebaseResult.reason}`;
-        console.error(errorMsg);
-        errors.push(errorMsg);
+    try {
+        console.log("Sending data to Firebase...");
+        const fireMasterDataRef = db.ref(`fire-masterdata/aliases/${alias}`);
+        await fireMasterDataRef.set(aliasData);
+        firebaseSuccess = true;
+        console.log("Successfully sent data to Firebase.");
+    } catch (error) {
+        firebaseError = `Error calling Firebase API: ${error.message}`;
+        console.error(firebaseError);
     }
 
-    if (errors.length > 0) {
+    // --- Final Response ---
+    if (wixSuccess && firebaseSuccess) {
+        return {
+          statusCode: 200,
+          headers: { 'Access-Control-Allow-Origin': '*' },
+          body: JSON.stringify({ success: true, message: 'Alias saved in both databases' }),
+        };
+    } else {
         return {
             statusCode: 500,
             headers: { 'Access-Control-Allow-Origin': '*' },
-            body: JSON.stringify({ success: false, message: 'One or more database updates failed.', errors: errors }),
+            body: JSON.stringify({ 
+                success: false, 
+                message: 'One or more database updates failed.',
+                errors: { wix: wixError, firebase: firebaseError }
+            }),
         };
     }
-
-    // --- Success Response ---
-    return {
-      statusCode: 200,
-      headers: { 'Access-Control-Allow-Origin': '*' },
-      body: JSON.stringify({ success: true, message: 'Alias saved in both databases' }),
-    };
 
   } catch (error) {
     console.error('Error saving alias:', error);
