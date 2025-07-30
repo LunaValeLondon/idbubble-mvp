@@ -27,11 +27,26 @@ const db = admin.database();
 
 // --- Netlify Serverless Function Handler ---
 exports.handler = async (event, context) => {
+  // --- CORS Preflight Check ---
+  // Browsers send an OPTIONS request first to check permissions. We need to allow this.
+  if (event.httpMethod === 'OPTIONS') {
+    return {
+      statusCode: 204, // No Content
+      headers: {
+        'Access-Control-Allow-Origin': '*', // Allow any origin
+        'Access-Control-Allow-Headers': 'Content-Type',
+        'Access-Control-Allow-Methods': 'POST, OPTIONS'
+      },
+      body: ''
+    };
+  }
+
+  // We only want to handle POST requests for the main logic.
   if (event.httpMethod !== 'POST') {
     return {
       statusCode: 405,
+      headers: { 'Access-Control-Allow-Origin': '*' },
       body: JSON.stringify({ error: 'Method Not Allowed' }),
-      headers: { 'Allow': 'POST' },
     };
   }
 
@@ -42,11 +57,11 @@ exports.handler = async (event, context) => {
     if (!alias || !timestamp) {
       return {
         statusCode: 400,
+        headers: { 'Access-Control-Allow-Origin': '*' },
         body: JSON.stringify({ error: 'Missing required fields: alias and timestamp' }),
       };
     }
 
-    // This is the data object we will send to both Wix and Firebase
     const aliasData = {
       email: email || '',
       timestamp,
@@ -54,35 +69,34 @@ exports.handler = async (event, context) => {
       deviceType: deviceType || '',
     };
 
-    // --- Get Wix API details from environment variables ---
     const wixApiUrl = process.env.WIX_API_URL;
     const wixApiKey = process.env.WIX_API_KEY;
 
     if (!wixApiUrl || !wixApiKey) {
         console.error('Wix API URL or Key is not configured in Netlify environment variables.');
-        return { statusCode: 500, body: JSON.stringify({ error: 'Server configuration error.' }) };
+        return { 
+            statusCode: 500, 
+            headers: { 'Access-Control-Allow-Origin': '*' },
+            body: JSON.stringify({ error: 'Server configuration error.' }) 
+        };
     }
-
-    // --- Define Database and API Operations ---
 
     // Operation 1: Send data to the new Wix API endpoint
     const wixPromise = fetch(wixApiUrl, {
         method: 'POST',
         headers: {
             'Content-Type': 'application/json',
-            'x-api-key': wixApiKey // Send the secret key for authentication
+            'x-api-key': wixApiKey
         },
-        body: JSON.stringify({ alias, ...aliasData }) // Send the full data object
+        body: JSON.stringify({ alias, ...aliasData })
     });
 
     // Operation 2: Set data in Firebase
     const fireMasterDataRef = db.ref(`fire-masterdata/aliases/${alias}`);
     const firebasePromise = fireMasterDataRef.set(aliasData);
 
-    // Use Promise.allSettled to wait for both operations to complete
     const results = await Promise.allSettled([wixPromise, firebasePromise]);
 
-    // Check the results of both operations
     const wixResult = results[0];
     const firebaseResult = results[1];
     
@@ -101,6 +115,7 @@ exports.handler = async (event, context) => {
     if (errors.length > 0) {
         return {
             statusCode: 500,
+            headers: { 'Access-Control-Allow-Origin': '*' },
             body: JSON.stringify({ success: false, message: 'One or more database updates failed.', errors: errors }),
         };
     }
@@ -108,6 +123,7 @@ exports.handler = async (event, context) => {
     // --- Success Response ---
     return {
       statusCode: 200,
+      headers: { 'Access-Control-Allow-Origin': '*' },
       body: JSON.stringify({ success: true, message: 'Alias saved in both databases' }),
     };
 
@@ -115,6 +131,7 @@ exports.handler = async (event, context) => {
     console.error('Error saving alias:', error);
     return {
       statusCode: 500,
+      headers: { 'Access-Control-Allow-Origin': '*' },
       body: JSON.stringify({ error: 'Internal Server Error' }),
     };
   }
