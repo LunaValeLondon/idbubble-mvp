@@ -1,3 +1,15 @@
+# This is the main configuration file for your Netlify site.
+
+# The [build] section tells Netlify's build system what commands
+# to run and where to find your functions.
+[build]
+  # This command tells Netlify to install the tools listed in package.json.
+  command = "npm install"
+  
+  # This is the directory where Netlify will find your serverless functions.
+  functions = "netlify/functions/"
+
+# The [dev] block is used for local development with `netlify dev`.
 [dev]
   functions = "netlify/functions"
   port = 8888
